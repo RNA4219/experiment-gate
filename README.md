@@ -2,6 +2,15 @@
 
 仮説・PoC案・参考根拠を入力として、「今試す価値があるか」を判定する仮説評価エージェントです。8つの評価軸でスコアリングし、go/hold/no_go の3値判定を返します。
 
+## Skills
+
+この repo には CLI を扱いやすくするための Skill が同梱されています。
+
+- Claude 向け: `skills/claude/SKILL.md`
+- Codex 向け: `skills/codex/SKILL.md`
+
+どちらも `python -m experiment_gate` の入口、`run_gate()`、`--config` / `--set`、確認用コマンド、レビュー観点を素早く掴むためのガイドです。
+
 ## 何ができるか
 
 - 仮説の事業価値・技術的実現可能性の多角的評価
@@ -191,3 +200,9 @@ python -m pytest tests/test_gate.py -v
 ## ライセンス
 
 MIT License
+
+
+
+
+
+
