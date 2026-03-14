@@ -28,6 +28,44 @@ cd experiment-gate
 pip install -e .
 ```
 
+### .env とモデル設定
+
+1. `.env.example` をコピーして `.env` を作成する
+2. 使う provider を 1 つ選び、対応する API キーを設定する
+3. provider に対応するモデル名を設定する
+4. 必要なら timeout や retry を調整する
+
+```bash
+Copy-Item .env.example .env
+```
+
+最小構成の例:
+
+```env
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-api-key
+OPENAI_MODEL=gpt-5-mini
+```
+
+OpenRouter を使う例:
+
+```env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-api-key
+OPENROUTER_API_MODEL=openrouter/hunter-alpha
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+```
+
+複数 provider の failover を使う例:
+
+```env
+LLM_PROVIDER_SEQUENCE=openrouter,openai
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_API_MODEL=openrouter/hunter-alpha
+OPENAI_API_KEY=your-openai-key
+OPENAI_MODEL=gpt-5-mini
+```
+
 ### CLI
 
 ```bash
@@ -200,9 +238,3 @@ python -m pytest tests/test_gate.py -v
 ## ライセンス
 
 MIT License
-
-
-
-
-
-
