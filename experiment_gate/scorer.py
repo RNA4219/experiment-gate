@@ -8,9 +8,16 @@ Responsible for:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - optional until config file is used
+    yaml = None
 
 from experiment_gate.schemas import (
     GateRequest,
@@ -43,6 +50,8 @@ DEFAULT_THRESHOLDS = {
     "hold_min": 45,
 }
 
+DEFAULT_GATE_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "defaults.yaml"
+
 
 class ScoringConfig(BaseModel):
     """Configuration for scoring."""
@@ -52,19 +61,15 @@ class ScoringConfig(BaseModel):
 
 
 def compute_weighted_total(breakdown: ScoreBreakdown, weights: dict[str, float]) -> int:
-    """Compute weighted total score from breakdown.
-
-    Note: dependency_risk and operational_risk are inverse (lower is better),
-    so they're subtracted from 20 before weighting.
-    """
+    """Compute weighted total score from breakdown."""
     raw_scores = {
         "impact": breakdown.impact,
         "feasibility": breakdown.feasibility,
         "learning_value": breakdown.learning_value,
         "reusability": breakdown.reusability,
         "time_to_signal": breakdown.time_to_signal,
-        "dependency_risk": 20 - breakdown.dependency_risk,  # Inverse
-        "operational_risk": 20 - breakdown.operational_risk,  # Inverse
+        "dependency_risk": breakdown.dependency_risk,
+        "operational_risk": breakdown.operational_risk,
         "novelty": breakdown.novelty,
     }
 
@@ -162,9 +167,9 @@ def build_reasoning_summary(
 
     top_concerns = []
     if breakdown.dependency_risk >= 15:
-        top_concerns.append("依存リスクが高い")
+        top_concerns.append("依存リスクが低い")
     if breakdown.operational_risk >= 15:
-        top_concerns.append("運用リスクが高い")
+        top_concerns.append("運用リスクが低い")
     if breakdown.time_to_signal <= 10:
         top_concerns.append("信号取得まで時間がかかる")
 
@@ -173,7 +178,7 @@ def build_reasoning_summary(
     if top_strengths:
         parts.append(f"強み: {', '.join(top_strengths)}")
     if top_concerns:
-        parts.append(f"懸念: {', '.join(top_concerns)}")
+        parts.append(f"補足: {', '.join(top_concerns)}")
 
     if rationale.why_now:
         parts.append(f"今やる理由: {rationale.why_now[0]}")
@@ -228,18 +233,17 @@ def create_gate_response(
     )
 
 
-# Default score breakdown for placeholder/fallback
 def create_default_score_breakdown() -> ScoreBreakdown:
-    """Create a default mid-range score breakdown."""
+    """Create a conservative fallback score breakdown."""
     return ScoreBreakdown(
-        impact=10,
-        feasibility=10,
-        learning_value=10,
-        reusability=10,
-        time_to_signal=10,
-        dependency_risk=10,
-        operational_risk=10,
-        novelty=10
+        impact=6,
+        feasibility=6,
+        learning_value=6,
+        reusability=6,
+        time_to_signal=6,
+        dependency_risk=6,
+        operational_risk=6,
+        novelty=6
     )
 
 
@@ -250,3 +254,123 @@ def create_default_rationale() -> Rationale:
         why_not_now=["詳細な評価が未実施"],
         critical_uncertainties=["PoCの詳細要件", "リソースの可用性"]
     )
+
+
+def create_failure_rationale(reason: str | None = None) -> Rationale:
+    """Create a rationale for infrastructure or evaluation failures."""
+    message = reason or "LLM評価を完了できませんでした"
+    return Rationale(
+        why_now=[],
+        why_not_now=["評価基盤の状態が不安定なため判定を保留"],
+        critical_uncertainties=[message],
+    )
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _parse_scalar(value: str) -> Any:
+    lowered = value.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if lowered in {"null", "none"}:
+        return None
+    try:
+        if "." in value:
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _load_mapping_file(path: str | Path) -> dict[str, Any]:
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    text = config_path.read_text(encoding="utf-8")
+    suffix = config_path.suffix.lower()
+    if suffix == ".json":
+        data = json.loads(text)
+    elif suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise RuntimeError("PyYAML is required to load YAML config files")
+        data = yaml.safe_load(text) or {}
+    else:
+        raise ValueError(f"Unsupported config file format: {config_path}")
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a mapping at the top level")
+    return data
+
+
+def _normalize_scoring_config(data: dict[str, Any]) -> dict[str, Any]:
+    if not data:
+        return {}
+    if "gate" in data:
+        gate = data.get("gate") or {}
+        if not isinstance(gate, dict):
+            raise ValueError("gate config must be a mapping")
+        scoring = gate.get("scoring") or {}
+        if not isinstance(scoring, dict):
+            raise ValueError("gate.scoring config must be a mapping")
+        return scoring
+    if "scoring" in data:
+        scoring = data.get("scoring") or {}
+        if not isinstance(scoring, dict):
+            raise ValueError("scoring config must be a mapping")
+        return scoring
+    return data
+
+
+def _config_from_set_values(set_values: list[str] | None = None) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for item in set_values or []:
+        if "=" not in item:
+            raise ValueError(f"Override must be in key=value format: {item}")
+        key, raw_value = item.split("=", 1)
+        parts = [part for part in key.split(".") if part]
+        if parts[:2] == ["gate", "scoring"]:
+            parts = parts[2:]
+        elif parts[:1] == ["scoring"]:
+            parts = parts[1:]
+        if not parts:
+            raise ValueError(f"Override key is empty: {item}")
+        current: dict[str, Any] = {}
+        cursor = current
+        for part in parts[:-1]:
+            next_cursor: dict[str, Any] = {}
+            cursor[part] = next_cursor
+            cursor = next_cursor
+        cursor[parts[-1]] = _parse_scalar(raw_value)
+        merged = _deep_merge(merged, current)
+    return merged
+
+
+def load_scoring_config(
+    *,
+    config: ScoringConfig | None = None,
+    config_dict: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+    set_values: list[str] | None = None,
+) -> ScoringConfig:
+    """Load Gate scoring config from defaults, file, dict, and CLI overrides."""
+    if config is not None:
+        base = config.model_dump(mode="json")
+    else:
+        base = ScoringConfig().model_dump(mode="json")
+
+    merged = dict(base)
+    if DEFAULT_GATE_CONFIG_PATH.exists():
+        merged = _deep_merge(merged, _normalize_scoring_config(_load_mapping_file(DEFAULT_GATE_CONFIG_PATH)))
+    if config_path is not None:
+        merged = _deep_merge(merged, _normalize_scoring_config(_load_mapping_file(config_path)))
+    if config_dict:
+        merged = _deep_merge(merged, _normalize_scoring_config(config_dict))
+    merged = _deep_merge(merged, _config_from_set_values(set_values))
+    return ScoringConfig.model_validate(merged)

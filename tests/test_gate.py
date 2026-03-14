@@ -438,3 +438,69 @@ class TestIntegration:
             "reject"
         ]
         assert response.reasoning_summary is not None
+
+def test_compute_weighted_total_keeps_low_risk_scores_positive():
+    safer = ScoreBreakdown(
+        impact=10,
+        feasibility=10,
+        learning_value=10,
+        reusability=10,
+        time_to_signal=10,
+        dependency_risk=18,
+        operational_risk=18,
+        novelty=10,
+    )
+    riskier = ScoreBreakdown(
+        impact=10,
+        feasibility=10,
+        learning_value=10,
+        reusability=10,
+        time_to_signal=10,
+        dependency_risk=2,
+        operational_risk=2,
+        novelty=10,
+    )
+
+    safer_total = compute_weighted_total(safer, {})
+    riskier_total = compute_weighted_total(riskier, {})
+
+    assert safer_total > riskier_total
+
+
+def test_run_gate_pipeline_failure_falls_back_to_hold(monkeypatch, sample_gate_request: GateRequest):
+    async def raise_failure(request, llm, verbose):
+        raise RuntimeError("Connection error")
+
+    monkeypatch.setattr("experiment_gate.runner.run_gate_pipeline", raise_failure)
+
+    response = run_gate(request=sample_gate_request, use_llm=True, verbose=False)
+
+    assert response.decision.verdict == Verdict.HOLD
+    assert response.next_step.recommended_action == "gather_evidence"
+    assert "Connection error" in response.rationale.critical_uncertainties[0]
+
+
+def test_run_gate_applies_scoring_overrides(
+    sample_gate_request: GateRequest,
+    sample_score_breakdown: ScoreBreakdown,
+    sample_rationale: Rationale,
+):
+    response = run_gate(
+        request=sample_gate_request,
+        score_breakdown=sample_score_breakdown,
+        rationale=sample_rationale,
+        config_dict={
+            "gate": {
+                "scoring": {
+                    "thresholds": {
+                        "go_min": 120,
+                        "hold_min": 95,
+                    }
+                }
+            }
+        },
+        use_llm=False,
+        verbose=False,
+    )
+
+    assert response.decision.verdict == Verdict.NO_GO

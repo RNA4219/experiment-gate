@@ -24,8 +24,8 @@ def test_run_uses_canonical_config_and_formats_result(monkeypatch):
         captured['verbose'] = verbose
         return DummyResponse()
 
-    monkeypatch.setattr('insight_core.runner.run_pipeline', fake_run_pipeline)
-    monkeypatch.setattr('insight_core.runner.build_agent_result', lambda request, response: {'version': 'output_schema_v2', 'source_count': len(request.sources)})
+    monkeypatch.setattr('experiment_gate.runner.run_pipeline', fake_run_pipeline)
+    monkeypatch.setattr('experiment_gate.runner.build_agent_result', lambda request, response: {'version': 'output_schema_v2', 'source_count': len(request.sources)})
 
     result = run(
         request_dict={
@@ -51,7 +51,7 @@ def test_run_uses_canonical_config_and_formats_result(monkeypatch):
 
 def test_run_raw_returns_response_object(monkeypatch):
     response = DummyResponse()
-    monkeypatch.setattr('insight_core.runner.run_pipeline', lambda request, llm, verbose: response)
+    monkeypatch.setattr('experiment_gate.runner.run_pipeline', lambda request, llm, verbose: response)
 
     result = run(
         request=InsightRequest(sources=[Source(source_id='src_1', title='Doc', content='hello')]),

@@ -283,7 +283,7 @@ def aggregate_scores(
             avg = sum(values) / len(values)
             final_scores[axis] = int(round(avg))
         else:
-            final_scores[axis] = 10  # Default middle score
+            final_scores[axis] = 0  # Missing scores should not inflate the verdict
 
     return ScoreBreakdown(**final_scores)
 
@@ -341,9 +341,13 @@ async def run_gate_pipeline(
     # Evaluate with all personas
     persona_results = await evaluate_with_all_personas(request, personas, llm, verbose)
 
-    # Aggregate scores and rationale
-    score_breakdown = aggregate_scores(persona_results)
     rationale = aggregate_rationale(persona_results)
+    if not any(result.get("scores") for result in persona_results):
+        reason = rationale.critical_uncertainties[0] if rationale.critical_uncertainties else "No persona evaluations succeeded"
+        raise RuntimeError(reason)
+
+    # Aggregate scores after at least one persona succeeded
+    score_breakdown = aggregate_scores(persona_results)
 
     applied_persona_ids = [p["persona_id"] for p in persona_results]
 
@@ -357,3 +361,4 @@ def run_gate_pipeline_sync(
 ) -> tuple[ScoreBreakdown, Rationale, list[str]]:
     """Sync wrapper for gate pipeline."""
     return asyncio.run(run_gate_pipeline(request, llm, verbose))
+

@@ -9,7 +9,7 @@ class TestPdfCliSupport:
         pdf_path.write_bytes(b"%PDF-1.4\n")
 
         monkeypatch.setattr(
-            "insight_core.request_loader.resolve_source_content",
+            "experiment_gate.request_loader.resolve_source_content",
             lambda payload: ("Extracted PDF text", payload.get("title") or "sample"),
         )
 
@@ -39,7 +39,7 @@ class TestPdfCliSupport:
         text_path = tmp_path / "sample.txt"
         text_path.write_text("hello", encoding="utf-8")
 
-        monkeypatch.setattr('insight_core.cli.run', lambda **kwargs: {'version': 'output_schema_v2'})
+        monkeypatch.setattr('experiment_gate.cli.run', lambda **kwargs: {'version': 'output_schema_v2'})
 
         exit_code = main(['--text', str(text_path)])
 

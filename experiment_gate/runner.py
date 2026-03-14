@@ -16,16 +16,16 @@ from experiment_gate.schemas import (
     GateRequest,
     GateResponse,
     InsightRequest,
-    RunInfo,
-    RunStatus,
-    ScoreBreakdown,
     Rationale,
+    ScoreBreakdown,
 )
 from experiment_gate.scorer import (
     ScoringConfig,
-    create_gate_response,
-    create_default_score_breakdown,
     create_default_rationale,
+    create_default_score_breakdown,
+    create_failure_rationale,
+    create_gate_response,
+    load_scoring_config,
 )
 
 
@@ -197,6 +197,13 @@ def load_gate_request(
     return GateRequest(**request_dict)
 
 
+def _resolve_gate_fallback(error: Exception | None = None) -> tuple[ScoreBreakdown, Rationale]:
+    score_breakdown = create_default_score_breakdown()
+    reason = str(error) if error else None
+    rationale = create_failure_rationale(reason) if error else create_default_rationale()
+    return score_breakdown, rationale
+
+
 def run_gate(
     *,
     request: GateRequest | None = None,
@@ -205,32 +212,22 @@ def run_gate(
     score_breakdown: ScoreBreakdown | None = None,
     rationale: Rationale | None = None,
     config: ScoringConfig | None = None,
+    config_dict: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+    set_values: list[str] | None = None,
     llm: LLMClient | None = None,
     use_llm: bool = True,
     verbose: bool = True,
 ) -> GateResponse:
-    """Run the experiment gate evaluation.
-
-    This is the main entry point for experiment-gate.
-    Accepts a GateRequest and returns a GateResponse with verdict.
-
-    Args:
-        request: A GateRequest object.
-        request_dict: A dict to construct GateRequest from.
-        input_path: Path to JSON file containing GateRequest.
-        score_breakdown: Optional pre-computed scores (for testing).
-        rationale: Optional pre-computed rationale (for testing).
-        config: Optional scoring configuration.
-        llm: Optional LLM client for evaluation.
-        use_llm: If True, use LLM for evaluation. If False, use defaults.
-        verbose: Whether to print progress messages.
-
-    Returns:
-        GateResponse with verdict, scores, and recommendations.
-    """
+    """Run the experiment gate evaluation."""
     started_at = datetime.now(timezone.utc)
+    scoring_config = load_scoring_config(
+        config=config,
+        config_dict=config_dict,
+        config_path=config_path,
+        set_values=set_values,
+    )
 
-    # Load request
     if request is None:
         request = load_gate_request(input_path=input_path, request_dict=request_dict)
 
@@ -240,7 +237,6 @@ def run_gate(
 
     applied_persona_ids: list[str] = []
 
-    # Use LLM evaluation or provided/default values
     if use_llm and score_breakdown is None:
         try:
             llm_client = llm or LLMClient()
@@ -249,19 +245,16 @@ def run_gate(
             )
         except Exception as e:
             if verbose:
-                print(f"[ExperimentGate] LLM evaluation failed, using defaults: {e}", flush=True)
-            score_breakdown = create_default_score_breakdown()
-            rationale = create_default_rationale()
+                print(f"[ExperimentGate] LLM evaluation failed, using conservative fallback: {e}", flush=True)
+            score_breakdown, rationale = _resolve_gate_fallback(e)
 
     if score_breakdown is None:
-        score_breakdown = create_default_score_breakdown()
+        score_breakdown, fallback_rationale = _resolve_gate_fallback()
+        rationale = rationale or fallback_rationale
     if rationale is None:
         rationale = create_default_rationale()
 
-    # Build response
-    response = create_gate_response(request, score_breakdown, rationale, config)
-
-    # Update run info
+    response = create_gate_response(request, score_breakdown, rationale, scoring_config)
     response.run.started_at = started_at
     response.run.finished_at = datetime.now(timezone.utc)
     response.run.applied_personas = applied_persona_ids
@@ -283,14 +276,22 @@ async def run_gate_async(
     score_breakdown: ScoreBreakdown | None = None,
     rationale: Rationale | None = None,
     config: ScoringConfig | None = None,
+    config_dict: dict[str, Any] | None = None,
+    config_path: str | Path | None = None,
+    set_values: list[str] | None = None,
     llm: LLMClient | None = None,
     use_llm: bool = True,
     verbose: bool = True,
 ) -> GateResponse:
     """Async version of run_gate."""
     started_at = datetime.now(timezone.utc)
+    scoring_config = load_scoring_config(
+        config=config,
+        config_dict=config_dict,
+        config_path=config_path,
+        set_values=set_values,
+    )
 
-    # Load request
     if request is None:
         request = load_gate_request(input_path=input_path, request_dict=request_dict)
 
@@ -300,7 +301,6 @@ async def run_gate_async(
 
     applied_persona_ids: list[str] = []
 
-    # Use LLM evaluation or provided/default values
     if use_llm and score_breakdown is None:
         try:
             llm_client = llm or LLMClient()
@@ -309,19 +309,16 @@ async def run_gate_async(
             )
         except Exception as e:
             if verbose:
-                print(f"[ExperimentGate] LLM evaluation failed, using defaults: {e}", flush=True)
-            score_breakdown = create_default_score_breakdown()
-            rationale = create_default_rationale()
+                print(f"[ExperimentGate] LLM evaluation failed, using conservative fallback: {e}", flush=True)
+            score_breakdown, rationale = _resolve_gate_fallback(e)
 
     if score_breakdown is None:
-        score_breakdown = create_default_score_breakdown()
+        score_breakdown, fallback_rationale = _resolve_gate_fallback()
+        rationale = rationale or fallback_rationale
     if rationale is None:
         rationale = create_default_rationale()
 
-    # Build response
-    response = create_gate_response(request, score_breakdown, rationale, config)
-
-    # Update run info
+    response = create_gate_response(request, score_breakdown, rationale, scoring_config)
     response.run.started_at = started_at
     response.run.finished_at = datetime.now(timezone.utc)
     response.run.applied_personas = applied_persona_ids

@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     gate_parser = subparsers.add_parser("gate", help="Run experiment gate evaluation")
     gate_parser.add_argument("-i", "--input", type=Path, required=True, help="Path to GateRequest JSON file")
     gate_parser.add_argument("-o", "--output", type=Path, default=None, help="Path to output JSON file")
+    gate_parser.add_argument("--config", type=Path, default=None, help="Path to YAML/JSON gate config file")
     gate_parser.add_argument("--raw", action="store_true", help="Output raw GateResponse instead of result format")
     gate_parser.add_argument("--set", dest="set_values", action="append", default=[], help="Override config value, e.g. --set gate.scoring.weights.novelty=0.3")
 
@@ -144,6 +145,8 @@ def run_gate_command(args: argparse.Namespace) -> int:
         with spinner("Experiment Gate evaluating", enabled=sys.stderr.isatty()):
             result = run_gate(
                 input_path=args.input,
+                config_path=args.config,
+                set_values=args.set_values,
                 verbose=True,
             )
     except Exception as exc:
@@ -158,7 +161,6 @@ def run_gate_command(args: argparse.Namespace) -> int:
         args.output.write_text(output_json, encoding="utf-8")
         print(f"Response written to: {args.output}")
     else:
-        # Use utf-8 encoding for stdout to avoid cp932 issues on Windows
         sys.stdout.buffer.write(output_json.encode("utf-8"))
         sys.stdout.buffer.write(b"\n")
         sys.stdout.buffer.flush()

@@ -28,8 +28,7 @@ python -m experiment_gate gate -i examples/sample_gate_request.json
 # 出力先を指定
 python -m experiment_gate gate -i request.json -o result.json
 
-# Raw形式で出力
-python -m experiment_gate gate -i request.json --raw
+# Raw形式で出力`r`npython -m experiment_gate gate -i request.json --raw`r`n`r`n# Gate 設定ファイルを指定`r`npython -m experiment_gate gate -i request.json --config config/defaults.yaml`r`n`r`n# Gate 閾値をその場で上書き`r`npython -m experiment_gate gate -i request.json --set gate.scoring.thresholds.go_min=80
 ```
 
 ### Python API
