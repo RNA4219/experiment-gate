@@ -1,0 +1,92 @@
+# Routing Configuration
+# Controls how personas are selected for each analysis run
+
+enabled: true
+lead_persona: "bright_generalist"
+lead_persona_mutable: true
+
+fallback_personas:
+  - "data_researcher"
+  - "detective"
+  - "operator"
+
+mandatory_audit_personas:
+  - "data_researcher"
+  - "detective"
+
+max_personas_by_evidence_density:
+  low: 3
+  medium: 4
+  high: 6
+
+routing_rules:
+  evaluation_gap:
+    preferred:
+      - "data_researcher"
+      - "detective"
+      - "operator"
+    optional:
+      - "researcher"
+
+  assumption_weakness:
+    preferred:
+      - "detective"
+      - "researcher"
+      - "data_researcher"
+    optional:
+      - "strategist"
+
+  contradiction:
+    preferred:
+      - "detective"
+      - "data_researcher"
+      - "researcher"
+    optional:
+      - "operator"
+
+  omitted_factor:
+    preferred:
+      - "detective"
+      - "strategist"
+      - "bright_generalist"
+    optional:
+      - "operator"
+
+  operational_risk:
+    preferred:
+      - "operator"
+      - "detective"
+      - "strategist"
+    optional:
+      - "researcher"
+
+  scalability_limit:
+    preferred:
+      - "operator"
+      - "strategist"
+      - "detective"
+    optional:
+      - "researcher"
+
+  data_gap:
+    preferred:
+      - "data_researcher"
+      - "researcher"
+      - "detective"
+    optional:
+      - "operator"
+
+  generalization_gap:
+    preferred:
+      - "researcher"
+      - "strategist"
+      - "detective"
+    optional:
+      - "data_researcher"
+
+  novelty_opportunity:
+    preferred:
+      - "curiosity_entertainer"
+      - "bright_generalist"
+    optional:
+      - "researcher"

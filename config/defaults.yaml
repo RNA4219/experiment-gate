@@ -1,0 +1,39 @@
+# Experiment Gate Default Configuration
+
+gate:
+  scoring:
+    weights:
+      impact: 1.0
+      feasibility: 1.0
+      learning_value: 1.0
+      reusability: 0.8
+      time_to_signal: 0.8
+      dependency_risk: 1.0
+      operational_risk: 1.0
+      novelty: 0.6
+    thresholds:
+      go_min: 70
+      hold_min: 45
+  decision:
+    require_minimum_evidence: true
+    allow_go_with_major_unknowns: false
+
+pipeline:
+  routing:
+    enabled: true
+    primary_persona: skeptical_reviewer
+    auto_select_personas: true
+  limits:
+    max_concurrency: 4
+    timeout_seconds: 300
+
+llm:
+  provider: null
+  model: null
+  temperature: 0.7
+  max_tokens: 4096
+
+output:
+  format: "result"
+  pretty_print: true
+  include_debug: false

@@ -1,0 +1,335 @@
+"""Lead persona routing plan generator.
+
+Invokes the lead persona to generate a routing plan.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from experiment_gate.llm_client import LLMClient, complete_json_async_compat, get_stage_max_tokens
+from experiment_gate.router.config import RoutingConfig
+from experiment_gate.router.density_estimator import estimate_evidence_density
+from experiment_gate.router.fallback import create_fallback_routing_plan
+from experiment_gate.router.validator import (
+    ensure_mandatory_audit_persona,
+    validate_routing_plan,
+)
+from experiment_gate.schemas import (
+    AssumptionItem,
+    ClaimItem,
+    EvidenceDensity,
+    EvidenceRef,
+    LimitationItem,
+    PersonaDefinition,
+    PersonaRole,
+    ProblemType,
+    RoutingPlan,
+)
+
+
+ROUTING_MAX_TOKENS = get_stage_max_tokens("routing")
+
+
+def build_routing_prompt(
+    claims: list[ClaimItem],
+    assumptions: list[AssumptionItem],
+    limitations: list[LimitationItem],
+    evidence_refs: list[EvidenceRef],
+    problem_type: str | None,
+    evidence_density: EvidenceDensity,
+    available_personas: list[PersonaDefinition],
+    config: RoutingConfig,
+) -> tuple[str, str]:
+    """Build prompt for lead persona routing.
+
+    Args:
+        claims: Extracted claims.
+        assumptions: Extracted assumptions.
+        limitations: Extracted limitations.
+        evidence_refs: Evidence references.
+        problem_type: Optional problem type.
+        evidence_density: Estimated evidence density.
+        available_personas: List of available personas.
+        config: Routing configuration.
+
+    Returns:
+        Tuple of (system_prompt, user_prompt).
+    """
+    def format_list(items: list[str], fallback: str = "特になし") -> str:
+        if not items:
+            return fallback
+        return "; ".join(items)
+
+    def format_persona_brief(persona: PersonaDefinition) -> str:
+        return (
+            f"- {persona.persona_id}: {persona.name}\n"
+            f"  role: {persona.role or '未設定'}\n"
+            f"  description: {persona.description or '未設定'}\n"
+            f"  obsession: {persona.obsession or '未設定'}\n"
+            f"  blind_spot: {persona.blind_spot or '未設定'}\n"
+            f"  objective: {persona.objective}\n"
+            f"  priorities: {format_list(persona.priorities)}\n"
+            f"  evidence_preference: {persona.evidence_preference or '未設定'}\n"
+            f"  key_questions: {format_list(persona.key_questions)}\n"
+            f"  trigger_signals: {format_list(persona.trigger_signals)}\n"
+            f"  red_flags: {format_list(persona.red_flags)}\n"
+            f"  optional_notes: {format_list(persona.optional_notes)}\n"
+            f"  acceptance_rule: {persona.acceptance_rule}\n"
+            f"  synthesis_style: {persona.synthesis_style or '重要点を簡潔にまとめる'}"
+        )
+
+    persona_list = "\n".join(format_persona_brief(p) for p in available_personas)
+
+    # Build claims summary
+    claims_text = "\n".join([f"- {c.statement[:100]}" for c in claims[:5]]) if claims else "（なし）"
+    assumptions_text = "\n".join([f"- {a.statement[:100]}" for a in assumptions[:5]]) if assumptions else "（なし）"
+
+    # Build limitations summary
+    limitations_text = "\n".join([f"- {l.statement[:100]}" for l in limitations[:5]]) if limitations else "（なし）"
+    evidence_text = "\n".join([f"- {e.quote or e.note or e.evidence_id}" for e in evidence_refs[:5]]) if evidence_refs else "（なし）"
+
+    system_prompt = f"""あなたは「{config.lead_persona}」として、以下の分析結果から最適な評価者Personaを選定してください。
+
+## あなたの役割
+Lead Personaとして、どの下流Personaを呼び出すべきかを決定するルーティングを行います。
+
+## 選択ルール
+1. 証拠密度が「low」の場合、呼び出すPersona数を2-3に制限
+2. 監査役Persona（data_researcher, detective, operator等）を最低1名含める
+3. novelty系Persona（curiosity_entertainer）は明確なメリットがある場合のみ選択
+4. 各選択Personaに役割を割り当てる
+5. Personaの obsession が今回の材料に刺さるか、blind_spot が危険に出ないかを見て選ぶ
+6. Personaの「trigger_signals」と「red_flags」を見て、今回の材料に合う者だけを選ぶ
+7. 選ばないPersonaにも、今回なぜ外したかを skip_reasons に具体的に残す
+8. selected_personas は「広く網羅する」より「役割が重ならず相補的である」ことを優先する
+9. optional_notes にある口調・匿名性・安全ガードが強いPersonaは、それを壊す役割を割り当てない
+
+## 利用可能な役割
+- evidence_checker: 証拠確認
+- hypothesis_refiner: 仮説精緻化
+- operational_risk_reviewer: 運用リスクレビュー
+- structural_abstraction: 構造的抽象化
+- novelty_probe: 新規性探索
+
+## 利用可能なPersona
+{persona_list}
+
+## 出力制約
+- selected_personas は必要最小限にし、上限は選択要件に従う
+- routing_reason は最大2件、各80文字以内
+- skip_reasons は本当に外した理由がある persona のみ、各80文字以内
+- JSON以外の前置きや説明は一切書かない
+
+## 出力形式
+以下のJSON形式でrouting_planを出力してください：
+```json
+{{
+  "lead_persona": "{config.lead_persona}",
+  "problem_type": "問題タイプ（省略可）",
+  "evidence_density": "{evidence_density.value}",
+  "selected_personas": ["persona_id1", "persona_id2"],
+  "skipped_personas": ["persona_id3"],
+  "role_assignments": {{
+    "persona_id1": "evidence_checker",
+    "persona_id2": "operational_risk_reviewer"
+  }},
+  "routing_reason": ["80文字以内の理由"],
+  "skip_reasons": {{
+    "persona_id3": "80文字以内の理由"
+  }},
+  "routing_confidence": 0.8
+}}
+```"""
+
+    user_prompt = f"""以下の分析結果から評価者Personaを選定してください。
+
+## 証拠密度
+{evidence_density.value}
+
+## 推定問題タイプ
+{problem_type or "不明"}
+
+## 主張（Claims）
+{claims_text}
+
+## 前提（Assumptions）
+{assumptions_text}
+
+## 制約（Limitations）
+{limitations_text}
+
+## 代表的な根拠断片
+{evidence_text}
+
+## 選択要件
+- 選択するPersona数: {config.max_personas_by_evidence_density.get(evidence_density.value, 4)}以下
+- 必須監査Persona: {config.mandatory_audit_personas}
+- evidence_density が low のときは speculative な persona fan-out を避ける
+- selected_personas ごとに「今回の材料に照らして何を担当させるか」が伝わる role_assignments にする
+
+JSON形式のみでrouting_planを出力してください。理由は短くしてください。"""
+
+    return system_prompt, user_prompt
+
+
+def parse_routing_response(
+    response: dict[str, Any],
+    config: RoutingConfig,
+) -> RoutingPlan:
+    """Parse LLM response into RoutingPlan.
+
+    Args:
+        response: Parsed JSON response from LLM.
+        config: Routing configuration.
+
+    Returns:
+        RoutingPlan instance.
+    """
+    # Parse evidence density
+    try:
+        evidence_density = EvidenceDensity(
+            response.get("evidence_density", "medium")
+        )
+    except ValueError:
+        evidence_density = EvidenceDensity.MEDIUM
+
+    # Parse role assignments
+    role_assignments: dict[str, PersonaRole] = {}
+    for persona_id, role_str in response.get("role_assignments", {}).items():
+        try:
+            role_assignments[persona_id] = PersonaRole(role_str)
+        except ValueError:
+            role_assignments[persona_id] = PersonaRole.EVIDENCE_CHECKER
+
+    # Ensure routing_reason has at least one item
+    routing_reason = response.get("routing_reason", [])
+    if not routing_reason:
+        routing_reason = ["Generated by lead persona routing"]
+
+    # Ensure selected_personas has at least one item
+    selected_personas = response.get("selected_personas", [])
+    if not selected_personas:
+        selected_personas = list(config.fallback_personas)
+
+    return RoutingPlan(
+        lead_persona=response.get("lead_persona", config.lead_persona),
+        problem_type=response.get("problem_type"),
+        evidence_density=evidence_density,
+        selected_personas=selected_personas,
+        skipped_personas=response.get("skipped_personas", []),
+        role_assignments=role_assignments,
+        routing_reason=routing_reason,
+        skip_reasons=response.get("skip_reasons", {}),
+        routing_confidence=response.get("routing_confidence", 0.5),
+    )
+
+
+async def generate_routing_plan_async(
+    claims: list[ClaimItem],
+    assumptions: list[AssumptionItem],
+    limitations: list[LimitationItem],
+    evidence_refs: list[EvidenceRef],
+    problem_type: str | None,
+    available_personas: list[PersonaDefinition],
+    llm: LLMClient,
+    config: RoutingConfig,
+) -> RoutingPlan:
+    """Generate routing plan using lead persona (async).
+
+    Args:
+        claims: Extracted claims.
+        assumptions: Extracted assumptions.
+        limitations: Extracted limitations.
+        evidence_refs: Evidence references.
+        problem_type: Optional problem type.
+        available_personas: List of available personas.
+        llm: LLM client instance.
+        config: Routing configuration.
+
+    Returns:
+        RoutingPlan instance.
+    """
+    # Estimate evidence density
+    evidence_density = estimate_evidence_density(claims, limitations, evidence_refs)
+
+    # Build prompt
+    system_prompt, user_prompt = build_routing_prompt(
+        claims,
+        assumptions,
+        limitations,
+        evidence_refs,
+        problem_type,
+        evidence_density,
+        available_personas,
+        config,
+    )
+
+    try:
+        # Call LLM
+        response = await complete_json_async_compat(
+            llm,
+            system_prompt,
+            user_prompt,
+            max_tokens=ROUTING_MAX_TOKENS,
+        )
+
+        # Parse response
+        routing_plan = parse_routing_response(response, config)
+
+        # Validate
+        errors = validate_routing_plan(routing_plan, available_personas, config)
+        if errors:
+            # Try to fix common issues
+            routing_plan = ensure_mandatory_audit_persona(routing_plan, config)
+
+        return routing_plan
+
+    except Exception as e:
+        # Return fallback on failure
+        return create_fallback_routing_plan(
+            config,
+            reason=f"Lead persona routing failed: {e}",
+        )
+
+
+def generate_routing_plan(
+    claims: list[ClaimItem],
+    assumptions: list[AssumptionItem],
+    limitations: list[LimitationItem],
+    evidence_refs: list[EvidenceRef],
+    problem_type: str | None,
+    available_personas: list[PersonaDefinition],
+    llm: LLMClient,
+    config: RoutingConfig,
+) -> RoutingPlan:
+    """Generate routing plan using lead persona (sync wrapper).
+
+    Args:
+        claims: Extracted claims.
+        assumptions: Extracted assumptions.
+        limitations: Extracted limitations.
+        evidence_refs: Evidence references.
+        problem_type: Optional problem type.
+        available_personas: List of available personas.
+        llm: LLM client instance.
+        config: Routing configuration.
+
+    Returns:
+        RoutingPlan instance.
+    """
+    import asyncio
+    return asyncio.run(
+        generate_routing_plan_async(
+            claims,
+            assumptions,
+            limitations,
+            evidence_refs,
+            problem_type,
+            available_personas,
+            llm,
+            config,
+        )
+    )
+
