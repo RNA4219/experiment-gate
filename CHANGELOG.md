@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.1
+
+### Added
+- README に `.env` 作成手順と provider / model 設定例を追加
+- `.env.example` を追加し、OpenAI / OpenRouter / Alibaba の環境変数例を明示
+
+### Changed
+- `OPENROUTER_APP_NAME` の既定例を `experiment-gate` に更新
+- 初回セットアップ時に CLI 実行までの導線が README だけで追えるよう改善
+
+### Validation
+- README と `.env.example` の記載が現行 CLI / LLMClient 実装と整合していることを確認
+
 ## v0.1.0
 
 ### Added
