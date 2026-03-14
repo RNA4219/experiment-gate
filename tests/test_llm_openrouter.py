@@ -15,7 +15,7 @@ def provider_env(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_MODEL", "openai/gpt-4.1-mini")
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setenv("OPENROUTER_SITE_URL", "https://example.com")
-    monkeypatch.setenv("OPENROUTER_APP_NAME", "insight-agent")
+    monkeypatch.setenv("OPENROUTER_APP_NAME", "experiment-gate")
     monkeypatch.setenv("OPENROUTER_TIMEOUT_SECONDS", "180")
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-dashscope-key")
     monkeypatch.setenv("ALIBABA_MODEL", "glm-5")
@@ -31,7 +31,7 @@ def test_llm_client_reads_openrouter_provider(monkeypatch, provider_env):
     assert client.base_url == "https://openrouter.ai/api/v1"
     assert client.timeout_seconds == 180.0
     assert client.default_headers["HTTP-Referer"] == "https://example.com"
-    assert client.default_headers["X-Title"] == "insight-agent"
+    assert client.default_headers["X-Title"] == "experiment-gate"
 
 
 def test_llm_client_reads_provider_sequence(monkeypatch, provider_env):
@@ -94,7 +94,7 @@ class LegacyAsyncStub:
 
 
 @pytest.mark.asyncio
-async def test_complete_json_async_compat_supports_legacy_stub():
+async def test_complete_json_async_compat_supports_stub_without_max_tokens():
     result = await complete_json_async_compat(
         LegacyAsyncStub(),
         "system",
@@ -103,3 +103,4 @@ async def test_complete_json_async_compat_supports_legacy_stub():
     )
 
     assert result == {"ok": True}
+
