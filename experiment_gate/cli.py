@@ -158,7 +158,10 @@ def run_gate_command(args: argparse.Namespace) -> int:
         args.output.write_text(output_json, encoding="utf-8")
         print(f"Response written to: {args.output}")
     else:
-        print(output_json)
+        # Use utf-8 encoding for stdout to avoid cp932 issues on Windows
+        sys.stdout.buffer.write(output_json.encode("utf-8"))
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.flush()
     return 0
 
 

@@ -296,7 +296,7 @@ class TestRunner:
 
     def test_run_gate_with_request(self, sample_gate_request: GateRequest):
         """Test run_gate with a GateRequest object."""
-        response = run_gate(request=sample_gate_request, verbose=False)
+        response = run_gate(request=sample_gate_request, use_llm=False, verbose=False)
         assert isinstance(response, GateResponse)
         assert response.run.request_id == sample_gate_request.request_id
 
@@ -308,7 +308,7 @@ class TestRunner:
             "poc_spec": sample_poc_spec.model_dump(),
             "evidence_bundle": sample_evidence_bundle.model_dump()
         }
-        response = run_gate(request_dict=request_dict, verbose=False)
+        response = run_gate(request_dict=request_dict, use_llm=False, verbose=False)
         assert isinstance(response, GateResponse)
         assert response.run.request_id == "req_dict_test"
 
@@ -323,6 +323,7 @@ class TestRunner:
             request=sample_gate_request,
             score_breakdown=sample_score_breakdown,
             rationale=sample_rationale,
+            use_llm=False,
             verbose=False
         )
         assert response.score_breakdown.impact == 15
@@ -387,7 +388,7 @@ class TestEvidenceInsufficiency:
         )
 
         # Should still work with default scores
-        response = run_gate(request=request, verbose=False)
+        response = run_gate(request=request, use_llm=False, verbose=False)
         assert isinstance(response, GateResponse)
         # Confidence should be lower due to empty evidence
         assert response.decision.confidence < 0.5
@@ -406,7 +407,7 @@ class TestEvidenceInsufficiency:
             evidence_bundle=no_sources
         )
 
-        response = run_gate(request=request, verbose=False)
+        response = run_gate(request=request, use_llm=False, verbose=False)
         assert isinstance(response, GateResponse)
         # Evidence refs should be empty
         assert response.evidence_refs == []
@@ -422,7 +423,7 @@ class TestIntegration:
 
     def test_full_flow_from_request_to_response(self, sample_gate_request: GateRequest):
         """Test complete flow from GateRequest to GateResponse."""
-        response = run_gate(request=sample_gate_request, verbose=False)
+        response = run_gate(request=sample_gate_request, use_llm=False, verbose=False)
 
         # Verify response structure
         assert response.run.mode == "experiment_gate"

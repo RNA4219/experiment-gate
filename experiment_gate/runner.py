@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from experiment_gate.gate_pipeline import run_gate_pipeline
 from experiment_gate.llm_client import LLMClient
 from experiment_gate.pipeline import run_pipeline, run_pipeline_async
 from experiment_gate.request_loader import load_request
@@ -203,6 +205,8 @@ def run_gate(
     score_breakdown: ScoreBreakdown | None = None,
     rationale: Rationale | None = None,
     config: ScoringConfig | None = None,
+    llm: LLMClient | None = None,
+    use_llm: bool = True,
     verbose: bool = True,
 ) -> GateResponse:
     """Run the experiment gate evaluation.
@@ -217,6 +221,8 @@ def run_gate(
         score_breakdown: Optional pre-computed scores (for testing).
         rationale: Optional pre-computed rationale (for testing).
         config: Optional scoring configuration.
+        llm: Optional LLM client for evaluation.
+        use_llm: If True, use LLM for evaluation. If False, use defaults.
         verbose: Whether to print progress messages.
 
     Returns:
@@ -232,8 +238,21 @@ def run_gate(
         print(f"[ExperimentGate] Processing request: {request.request_id}", flush=True)
         print(f"[ExperimentGate] Hypothesis: {request.hypothesis[:80]}...", flush=True)
 
-    # Use provided scores/rationale or create defaults
-    # In a full implementation, these would be computed via LLM evaluation
+    applied_persona_ids: list[str] = []
+
+    # Use LLM evaluation or provided/default values
+    if use_llm and score_breakdown is None:
+        try:
+            llm_client = llm or LLMClient()
+            score_breakdown, rationale, applied_persona_ids = asyncio.run(
+                run_gate_pipeline(request, llm_client, verbose)
+            )
+        except Exception as e:
+            if verbose:
+                print(f"[ExperimentGate] LLM evaluation failed, using defaults: {e}", flush=True)
+            score_breakdown = create_default_score_breakdown()
+            rationale = create_default_rationale()
+
     if score_breakdown is None:
         score_breakdown = create_default_score_breakdown()
     if rationale is None:
@@ -242,13 +261,15 @@ def run_gate(
     # Build response
     response = create_gate_response(request, score_breakdown, rationale, config)
 
-    # Update run info with actual timestamps
+    # Update run info
     response.run.started_at = started_at
     response.run.finished_at = datetime.now(timezone.utc)
+    response.run.applied_personas = applied_persona_ids
 
     if verbose:
         print(f"[ExperimentGate] Verdict: {response.decision.verdict.value}", flush=True)
         print(f"[ExperimentGate] Total score: {response.decision.total_score}/160", flush=True)
+        print(f"[ExperimentGate] Confidence: {response.decision.confidence:.2f}", flush=True)
         print(f"[ExperimentGate] Recommended: {response.next_step.recommended_action}", flush=True)
 
     return response
@@ -262,17 +283,53 @@ async def run_gate_async(
     score_breakdown: ScoreBreakdown | None = None,
     rationale: Rationale | None = None,
     config: ScoringConfig | None = None,
+    llm: LLMClient | None = None,
+    use_llm: bool = True,
     verbose: bool = True,
 ) -> GateResponse:
     """Async version of run_gate."""
-    # For now, this is a simple wrapper. In future, this would include
-    # async LLM evaluation calls.
-    return run_gate(
-        request=request,
-        request_dict=request_dict,
-        input_path=input_path,
-        score_breakdown=score_breakdown,
-        rationale=rationale,
-        config=config,
-        verbose=verbose,
-    )
+    started_at = datetime.now(timezone.utc)
+
+    # Load request
+    if request is None:
+        request = load_gate_request(input_path=input_path, request_dict=request_dict)
+
+    if verbose:
+        print(f"[ExperimentGate] Processing request: {request.request_id}", flush=True)
+        print(f"[ExperimentGate] Hypothesis: {request.hypothesis[:80]}...", flush=True)
+
+    applied_persona_ids: list[str] = []
+
+    # Use LLM evaluation or provided/default values
+    if use_llm and score_breakdown is None:
+        try:
+            llm_client = llm or LLMClient()
+            score_breakdown, rationale, applied_persona_ids = await run_gate_pipeline(
+                request, llm_client, verbose
+            )
+        except Exception as e:
+            if verbose:
+                print(f"[ExperimentGate] LLM evaluation failed, using defaults: {e}", flush=True)
+            score_breakdown = create_default_score_breakdown()
+            rationale = create_default_rationale()
+
+    if score_breakdown is None:
+        score_breakdown = create_default_score_breakdown()
+    if rationale is None:
+        rationale = create_default_rationale()
+
+    # Build response
+    response = create_gate_response(request, score_breakdown, rationale, config)
+
+    # Update run info
+    response.run.started_at = started_at
+    response.run.finished_at = datetime.now(timezone.utc)
+    response.run.applied_personas = applied_persona_ids
+
+    if verbose:
+        print(f"[ExperimentGate] Verdict: {response.decision.verdict.value}", flush=True)
+        print(f"[ExperimentGate] Total score: {response.decision.total_score}/160", flush=True)
+        print(f"[ExperimentGate] Confidence: {response.decision.confidence:.2f}", flush=True)
+        print(f"[ExperimentGate] Recommended: {response.next_step.recommended_action}", flush=True)
+
+    return response
